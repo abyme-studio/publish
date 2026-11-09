@@ -1,0 +1,79 @@
+# abyme publish
+
+Publish an abyme cell from your GitHub repository to abyme.studio. Anyone can then set it up as
+`hosted:<account>/<cell>#<range>`, if its visibility lets them.
+
+This repository holds only the workflow. abyme.studio gives a push token only to a run of this
+workflow, and only from a repository that an owner of the account trusts to publish its cells.
+
+## Before your first publish
+
+1. Have an abyme account: your own, or an org you own.
+2. An owner of that account trusts your repository to publish its cells, on the Platform pane at
+   abyme.studio.
+3. Your cell's `package.json` has `abyme.id` and `version`, and a lockfile (`pnpm-lock.yaml` or
+   `package-lock.json`) sits at the top of your repository.
+
+## Your workflow
+
+Add `.github/workflows/publish.yml` to your repository:
+
+```yaml
+name: publish
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        options: [dry-run, yank]
+      version:
+        description: The version to yank (x.y.z)
+        type: string
+        required: false
+jobs:
+  publish:
+    permissions:
+      contents: read
+      id-token: write
+    uses: abyme-studio/publish/.github/workflows/publish.yml@v1
+    with:
+      account: your-handle
+      action: ${{ inputs.action || 'publish' }}
+      version: ${{ inputs.version }}
+```
+
+Give `folder` when the cell is not at the top of your repository, and `cell` when its name in
+your account is not its `abyme.id`.
+
+## Publishing a version
+
+Bump `version` in `package.json`, then push a signed tag of that version:
+
+```sh
+git tag -s v1.2.0 -m "What changed in 1.2.0"
+git push origin v1.2.0
+```
+
+The tag's message becomes the version's notes. GitHub must verify its signature, so the key you sign
+with is on your GitHub account. The run builds the cell, commits the files `npm pack` would ship,
+and tags that commit `v1.2.0`, signed by whoever pushed the tag. A version never moves: publishing
+the same one again fails.
+
+Run the workflow by hand with `dry-run` to build and list what would ship. Nothing is pushed.
+
+## Yanking a version
+
+Run the workflow by hand with `yank` and the version. That version is marked yanked, and a new
+range no longer picks it. Nothing is deleted, so a profile that pinned it still starts.
+
+## What runs where
+
+Your install and build run in the job `build`, which has no OIDC token. The job `push` runs none of
+your code. It checks the tag is signed, trades the run's OIDC token for a push token to that one
+cell for 10 minutes, and pushes. The workflow holds no secret.
+
+## Licence
+
+MIT, as abyme is: [LICENSE](LICENSE).
