@@ -141,6 +141,8 @@ jobs:
           [ "$(printf %s "$ref" | jq -r .object.type)" = tag ] || unsigned "a lightweight tag"
           tag=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$(printf %s "$ref" | jq -r .object.sha)")
           [ "$(printf %s "$tag" | jq -r .verification.verified)" = true ] || unsigned "$(printf %s "$tag" | jq -r .verification.reason)"
+          # The tag still names the commit this run built: never one swapped in since.
+          [ "$(printf %s "$tag" | jq -r .object.sha)" = "$GITHUB_SHA" ] || unsigned "it names $(printf %s "$tag" | jq -r .object.sha), not $GITHUB_SHA, which this run built"
           { printf %s "$tag" | jq -r .message | sed -e '/^-----BEGIN /,$d'; printf '\nSigned-by: %s\n' "$GITHUB_ACTOR"; } >"$RUNNER_TEMP/notes"
       # The run's OIDC token, its audience abyme.studio, traded for a push token to this one cell.
       - name: A push token
@@ -173,6 +175,12 @@ jobs:
           TOKEN: ${{ steps.token.outputs.token }}
         run: |
           set -euo pipefail
+          # What `build` handed over is files alone: no git folder, no link, and no hook ever runs.
+          if [ "$ACTION" = publish ]; then
+            [ -z "$(find "$RUNNER_TEMP/ship" -name .git -print -quit)" ] || { echo "the build handed over a .git: a cell ships files alone" >&2; exit 1; }
+            [ -z "$(find "$RUNNER_TEMP/ship" -type l -print -quit)" ] || { echo "the build handed over a symlink: a cell ships files alone" >&2; exit 1; }
+          fi
+          git config --global core.hooksPath /dev/null
           git config --global user.name "abyme publish"
           git config --global user.email "publish@abyme.studio"
           git config --global "http.$REMOTE.extraHeader" "Authorization: Bearer $TOKEN"
