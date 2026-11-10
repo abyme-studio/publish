@@ -1,5 +1,5 @@
-# Publishes an abyme cell from your repository to abyme.studio, as `hosted:<account>/<cell>`.
-# Your repository calls it (README.md says how); abyme.studio gives a push token only to a run of
+# Publishes an abyme cell from your repository to abyme, as `hosted:<account>/<cell>`.
+# Your repository calls it (README.md says how); abyme gives a push token only to a run of
 # this workflow, from a repository an owner of the account trusts to publish its cells.
 #
 # A publish runs on your signed tag `v<version>`, the package's version. It builds the cell, commits
@@ -9,7 +9,7 @@
 # lists what would ship, and pushes nothing.
 #
 # It holds no secret: its one credential is the run's OIDC token (your job's `id-token: write`),
-# which abyme.studio trades for a push token to that one cell, for 10 minutes. Your code (install and
+# which abyme trades for a push token to that one cell, for 10 minutes. Your code (install and
 # build) runs in the job `build`, which cannot mint that token; the job `push` runs none of it.
 name: publish
 on:
@@ -36,7 +36,7 @@ on:
         type: string
         required: false
 env:
-  STUDIO: abyme.studio
+  GATEWAY: auth.abyme.dev
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -144,7 +144,7 @@ jobs:
           # The tag still names the commit this run built: never one swapped in since.
           [ "$(printf %s "$tag" | jq -r .object.sha)" = "$GITHUB_SHA" ] || unsigned "it names $(printf %s "$tag" | jq -r .object.sha), not $GITHUB_SHA, which this run built"
           { printf %s "$tag" | jq -r .message | sed -e '/^-----BEGIN /,$d'; printf '\nSigned-by: %s\n' "$GITHUB_ACTOR"; } >"$RUNNER_TEMP/notes"
-      # The run's OIDC token, its audience abyme.studio, traded for a push token to this one cell.
+      # The run's OIDC token, its audience auth.abyme.dev, traded for a push token to this one cell.
       - name: A push token
         id: token
         env:
@@ -152,14 +152,14 @@ jobs:
         run: |
           set -euo pipefail
           [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || { echo "no OIDC token: the calling job needs permissions id-token: write" >&2; exit 1; }
-          oidc=$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$STUDIO" | jq -r .value)
+          oidc=$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$GATEWAY" | jq -r .value)
           echo "::add-mask::$oidc"
           answer=$(curl -sS -w '\n%{http_code}' -X POST -H "Authorization: Bearer $oidc" -H "content-type: application/json" \
-            -d "$(jq -n --arg cell "$CELL" '{cell: $cell}')" "https://$STUDIO/gateway/cells/publish")
+            -d "$(jq -n --arg cell "$CELL" '{cell: $cell}')" "https://$GATEWAY/gateway/cells/publish")
           code=$(printf %s "$answer" | tail -n1)
           body=$(printf %s "$answer" | sed '$d')
           if [ "$code" != 200 ]; then
-            echo "$STUDIO refused the publish ($code): $(printf %s "$body" | jq -r '.message // .error // .' 2>/dev/null || printf %s "$body")" >&2
+            echo "$GATEWAY refused the publish ($code): $(printf %s "$body" | jq -r '.message // .error // .' 2>/dev/null || printf %s "$body")" >&2
             exit 1
           fi
           token=$(printf %s "$body" | jq -r .token)
@@ -182,7 +182,7 @@ jobs:
           fi
           git config --global core.hooksPath /dev/null
           git config --global user.name "abyme publish"
-          git config --global user.email "publish@abyme.studio"
+          git config --global user.email "publish@abyme.dev"
           git config --global "http.$REMOTE.extraHeader" "Authorization: Bearer $TOKEN"
           # The cell host takes a push over protocol v1 only.
           git config --global protocol.version 1
