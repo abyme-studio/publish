@@ -1,16 +1,16 @@
 # abyme publish
 
-Publish an abyme cell from your GitHub repository to abyme.studio. Anyone can then set it up as
+Publish an abyme cell from your GitHub repository to abyme. Anyone can then set it up as
 `hosted:<account>/<cell>#<range>`, if its visibility lets them.
 
-This repository holds only the workflow. abyme.studio gives a push token only to a run of this
+This repository holds only the workflow. abyme gives a push token only to a run of this
 workflow, and only from a repository that an owner of the account trusts to publish its cells.
 
 ## Before your first publish
 
 1. Have an abyme account: your own, or an org you own.
 2. An owner of that account trusts your repository to publish its cells, on the Platform pane at
-   abyme.studio.
+   auth.abyme.dev.
 3. Your cell's `package.json` has `abyme.id` and `version`, and a lockfile (`pnpm-lock.yaml` or
    `package-lock.json`) sits at the top of your repository.
 
