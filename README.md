@@ -68,11 +68,25 @@ Run the workflow by hand with `dry-run` to build and list what would ship. Nothi
 Run the workflow by hand with `yank` and the version. That version is marked yanked, and a new
 range no longer picks it. Nothing is deleted, so a profile that pinned it still starts.
 
+## What abyme refuses
+
+A public cell of any account but abyme ships no page code (a page half, styles, a library, or a
+contract's local code): its UI is records views it seeds and OpenUI it writes, which abyme draws.
+abyme refuses such a publish, `403 page_code`; a private or org cell may ship page code, which only
+its own account's profiles run.
+
+A new version breaks nothing callers of the version before it send or read, unless it is a new
+major: a removed function, a new required argument, a removed field. An addition needs at least a
+new minor. abyme refuses any other, `409 breaking_change`, naming each change. Each version's
+contract is kept on the cell's `store` branch for the next version's check.
+
 ## What runs where
 
-Your install and build run in the job `build`, which has no OIDC token. The job `push` runs none of
-your code. It checks the tag is signed, trades the run's OIDC token for a push token to that one
-cell for 10 minutes, and pushes. The workflow holds no secret.
+Your install and build run in the job `build`, which has no OIDC token; so does
+`publish-tools.mjs`, which reads what your built cell ships to a page and runs its built halves
+against stand-ins for its contract. The job `push` runs none of your code. It checks the tag is
+signed, trades the run's OIDC token, with the version, its page code and its contract, for a push
+token to that one cell for 10 minutes, and pushes. The workflow holds no secret.
 
 ## Licence
 

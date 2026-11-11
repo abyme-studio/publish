@@ -8,6 +8,12 @@
 # A yank tags `yanked/v<version>` on that version's commit and deletes nothing. A dry run builds and
 # lists what would ship, and pushes nothing.
 #
+# The trade for a push token says what the version ships to a page (`page`) and its contract
+# (`contract.json`), read off the built cell by publish-tools.mjs, a bundle of abyme's own rules
+# (abyme's scripts/publish-tools). abyme refuses a public cell of an account other than abyme that
+# ships page code, and a version that breaks what callers of the version before it send or read
+# without a new major. The contract goes to the cell's `store` branch beside its inspection.
+#
 # It holds no secret: its one credential is the run's OIDC token (your job's `id-token: write`),
 # which abyme trades for a push token to that one cell, for 10 minutes. Your code (install and
 # build) runs in the job `build`, which cannot mint that token; the job `push` runs none of it.
@@ -107,6 +113,31 @@ jobs:
           cat "$RUNNER_TEMP/files"
           mkdir -p "$RUNNER_TEMP/ship"
           while IFS= read -r f; do mkdir -p "$RUNNER_TEMP/ship/$(dirname "$f")"; cp "$FOLDER/$f" "$RUNNER_TEMP/ship/$f"; done <"$RUNNER_TEMP/files"
+      # abyme's rules of page code and of a contract, as this workflow's own tag carries them.
+      - uses: actions/checkout@v4
+        if: inputs.action != 'yank'
+        with:
+          repository: abyme-studio/publish
+          ref: v1
+          path: .abyme-publish
+          persist-credentials: false
+      - name: What it ships to a page, and its contract
+        if: inputs.action != 'yank'
+        run: |
+          set -euo pipefail
+          # It runs the cell's built halves against stand-ins, here, where its code already ran.
+          node .abyme-publish/publish-tools.mjs "$RUNNER_TEMP/ship" >"$RUNNER_TEMP/said.json"
+          mkdir -p "$RUNNER_TEMP/trade"
+          jq -c .page "$RUNNER_TEMP/said.json" >"$RUNNER_TEMP/trade/page.json"
+          jq .contract "$RUNNER_TEMP/said.json" >"$RUNNER_TEMP/trade/contract.json"
+          echo "page code: $(cat "$RUNNER_TEMP/trade/page.json")"
+      - uses: actions/upload-artifact@v4
+        if: inputs.action == 'publish'
+        with:
+          name: trade
+          path: ${{ runner.temp }}/trade
+          retention-days: 1
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: inputs.action == 'publish'
         with:
@@ -128,6 +159,11 @@ jobs:
         with:
           name: cell
           path: ${{ runner.temp }}/ship
+      - uses: actions/download-artifact@v4
+        if: inputs.action == 'publish'
+        with:
+          name: trade
+          path: ${{ runner.temp }}/trade
       # A publish is signed: the tag is annotated, and GitHub verifies its signature against the
       # tagger's keys. Who pushed it is the version's signer, `Signed-by: <login>`, its last line.
       - name: The tag is signed
@@ -145,17 +181,26 @@ jobs:
           [ "$(printf %s "$tag" | jq -r .object.sha)" = "$GITHUB_SHA" ] || unsigned "it names $(printf %s "$tag" | jq -r .object.sha), not $GITHUB_SHA, which this run built"
           { printf %s "$tag" | jq -r .message | sed -e '/^-----BEGIN /,$d'; printf '\nSigned-by: %s\n' "$GITHUB_ACTOR"; } >"$RUNNER_TEMP/notes"
       # The run's OIDC token, its audience auth.abyme.dev, traded for a push token to this one cell.
+      # A publish's trade says its version, what it ships to a page and its contract; a yank's, the cell alone.
       - name: A push token
         id: token
         env:
+          ACTION: ${{ inputs.action }}
           CELL: ${{ needs.build.outputs.cell }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
           [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || { echo "no OIDC token: the calling job needs permissions id-token: write" >&2; exit 1; }
           oidc=$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$GATEWAY" | jq -r .value)
           echo "::add-mask::$oidc"
+          if [ "$ACTION" = publish ]; then
+            jq -n --arg cell "$CELL" --arg version "$VERSION" --slurpfile page "$RUNNER_TEMP/trade/page.json" --slurpfile contract "$RUNNER_TEMP/trade/contract.json" \
+              '{cell: $cell, version: $version, page: $page[0], contract: $contract[0]}' >"$RUNNER_TEMP/trade.json"
+          else
+            jq -n --arg cell "$CELL" '{cell: $cell}' >"$RUNNER_TEMP/trade.json"
+          fi
           answer=$(curl -sS -w '\n%{http_code}' -X POST -H "Authorization: Bearer $oidc" -H "content-type: application/json" \
-            -d "$(jq -n --arg cell "$CELL" '{cell: $cell}')" "https://$GATEWAY/gateway/cells/publish")
+            -d @"$RUNNER_TEMP/trade.json" "https://$GATEWAY/gateway/cells/publish")
           code=$(printf %s "$answer" | tail -n1)
           body=$(printf %s "$answer" | sed '$d')
           if [ "$code" != 200 ]; then
@@ -206,5 +251,17 @@ jobs:
           git -C "$repo" add -A
           git -C "$repo" commit --quiet --allow-empty -m "$CELL $VERSION" -m "From $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
           git -C "$repo" tag -a "v$VERSION" -F "$RUNNER_TEMP/notes"
-          git -C "$repo" push --quiet origin main "v$VERSION"
+          # Its contract on `store`, beside the inspection abyme's CI writes, for the next version's diff.
+          git -C "$repo" fetch --quiet origin store:store 2>/dev/null || true
+          store=$RUNNER_TEMP/store
+          if git -C "$repo" rev-parse --verify --quiet store >/dev/null; then
+            git -C "$repo" worktree add --quiet "$store" store
+          else
+            git -C "$repo" worktree add --quiet --orphan -b store "$store"
+          fi
+          mkdir -p "$store/v$VERSION"
+          cp "$RUNNER_TEMP/trade/contract.json" "$store/v$VERSION/contract.json"
+          git -C "$store" add "v$VERSION/contract.json"
+          git -C "$store" commit --quiet -m "$CELL $VERSION: contract"
+          git -C "$repo" push --quiet origin main "v$VERSION" store
           echo "published $CELL $VERSION: hosted:$CELL#^$VERSION"
